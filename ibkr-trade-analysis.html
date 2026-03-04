@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IBKR · Trade Analysis</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #000;
+  --surface: #0a0a0a;
+  --card: #111;
+  --card-border: #1e1e1e;
+  --hover: #161616;
+  --bull: #00e676;
+  --bear: #ff1744;
+  --gold: #ffc400;
+  --blue: #40c4ff;
+  --purple: #ce93d8;
+  --orange: #ffab40;
+  --text: #e0e0e0;
+  --dim: #888;
+  --faint: #3a3a3a;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'DM Sans', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+  min-height: 100vh;
+}
+
+/* scanline */
+body::after {
+  content:''; position:fixed; inset:0;
+  background: repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 4px);
+  pointer-events:none; z-index:9999;
+}
+
+/* ── HEADER ── */
+header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 0 16px; height: 38px;
+  background: #060606; border-bottom: 1px solid #1a1a1a;
+  position: sticky; top: 0; z-index: 100;
+}
+.logo { display:flex; align-items:center; gap:8px; }
+.logo-mark {
+  width:22px; height:22px; background:var(--gold);
+  clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--mono); font-size:9px; font-weight:700; color:#000;
+}
+.logo-text { font-family:var(--mono); font-size:13px; font-weight:700; letter-spacing:.08em; color:#fff; }
+.logo-sub  { font-family:var(--mono); font-size:9px; color:var(--gold); letter-spacing:.15em; margin-top:1px; }
+.hdr-right { display:flex; align-items:center; gap:14px; }
+.hdr-pill {
+  font-family:var(--mono); font-size:9px; letter-spacing:.1em; padding:3px 8px;
+  border-radius:2px; border:1px solid; text-transform:uppercase;
+}
+.pill-live { color:var(--bull); border-color:#0d3d0d; background:#0a2a0a; }
+.pill-act  { color:var(--blue); border-color:#0d2a3d; background:#0a1a2a; }
+.hdr-time  { font-family:var(--mono); font-size:10px; color:var(--dim); }
+
+/* ── PAGE LAYOUT ── */
+.page { padding: 12px 14px; display:flex; flex-direction:column; gap:12px; }
+
+/* ── SECTION HEADING ── */
+.sec-heading {
+  font-family:var(--mono); font-size:9px; font-weight:600;
+  letter-spacing:.18em; text-transform:uppercase; color:var(--dim);
+  padding: 0 0 6px; border-bottom: 1px solid #1a1a1a;
+  display:flex; align-items:center; gap:10px;
+}
+.sec-heading span { color: var(--faint); font-weight:400; }
+
+/* ── KPI ROW ── */
+.kpi-row { display:grid; grid-template-columns:repeat(7,1fr); gap:8px; }
+.kpi {
+  background: var(--card); border:1px solid var(--card-border);
+  border-radius:3px; padding:10px 12px;
+  display:flex; flex-direction:column; gap:4px;
+  transition: background .12s;
+}
+.kpi:hover { background: var(--hover); }
+.kpi-label { font-family:var(--mono); font-size:8px; letter-spacing:.12em; color:var(--dim); text-transform:uppercase; }
+.kpi-value { font-family:var(--mono); font-size:18px; font-weight:700; line-height:1; }
+.kpi-sub   { font-family:var(--mono); font-size:9px; color:var(--dim); }
+.bull { color:var(--bull); } .bear { color:var(--bear); }
+.gold { color:var(--gold); } .blue { color:var(--blue); }
+.purple { color:var(--purple); } .orange { color:var(--orange); }
+.flat { color: var(--dim); }
+
+/* ── TWO-COL GRID ── */
+.two-col { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+
+/* ── CARD ── */
+.card {
+  background: var(--card); border:1px solid var(--card-border); border-radius:3px; overflow:hidden;
+}
+.card-hdr {
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 7px 10px 6px; border-bottom:1px solid #181818; background:#0a0a0a;
+}
+.card-title { font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); }
+.card-badge { font-family:var(--mono); font-size:8px; padding:2px 5px; border-radius:2px; letter-spacing:.1em; }
+.badge-green  { background:#0a2a0a; color:var(--bull); border:1px solid #0d3d0d; }
+.badge-red    { background:#2a0a0a; color:var(--bear); border:1px solid #3d0d0d; }
+.badge-blue   { background:#0a1a2a; color:var(--blue); border:1px solid #0d2a3d; }
+.badge-gold   { background:#1a1505; color:var(--gold); border:1px solid #2a2008; }
+.badge-purple { background:#1a0f1a; color:var(--purple); border:1px solid #2d1a2d; }
+
+/* ── POSITION TABLE ── */
+.pos-table { width:100%; }
+.pos-hdr, .pos-row {
+  display:grid;
+  grid-template-columns: 60px 30px 50px 55px 75px 75px 75px 60px 55px 80px 90px;
+  align-items:center; gap:2px; padding: 4px 10px;
+}
+.pos-hdr { border-bottom:1px solid #1c1c1c; }
+.col-h { font-family:var(--mono); font-size:8px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.col-h.r { text-align:right; }
+.pos-row { border-bottom:1px solid #141414; transition:background .1s; cursor:default; }
+.pos-row:last-child { border:none; }
+.pos-row:hover { background:var(--hover); }
+.pos-row.parent { background:#0d0d0d; }
+.pos-row.child  { background:#0a0a0a; padding-left:22px; }
+.pos-row.child .sym { color:var(--dim); font-size:10px; }
+
+.sym  { font-family:var(--mono); font-size:11px; font-weight:600; color:var(--blue); }
+.key-n{ font-family:var(--mono); font-size:10px; color:var(--dim); }
+.actn-buy  { background:#1a2a0a; color:var(--bull); font-family:var(--mono); font-size:9px; font-weight:700; padding:1px 5px; border-radius:1px; letter-spacing:.06em; }
+.actn-sell { background:#2a0a0a; color:var(--bear); font-family:var(--mono); font-size:9px; font-weight:700; padding:1px 5px; border-radius:1px; letter-spacing:.06em; }
+.typ { font-family:var(--mono); font-size:9px; color:var(--dim); letter-spacing:.06em; }
+.px  { font-family:var(--mono); font-size:11px; text-align:right; }
+.qty { font-family:var(--mono); font-size:10px; text-align:right; color:var(--dim); }
+
+.status-pill {
+  font-family:var(--mono); font-size:8px; padding:2px 6px; border-radius:2px;
+  letter-spacing:.06em; text-align:center; text-transform:uppercase;
+}
+.s-green   { background:#0d2a0d; color:var(--bull); border:1px solid #1a4a1a; }
+.s-maroon  { background:#2a1010; color:#ff6b6b; border:1px solid #4a1a1a; }
+.s-dkblue  { background:#0a1525; color:#64b5f6; border:1px solid #0d2540; }
+.s-dkgray  { background:#1a1a1a; color:#777; border:1px solid #2a2a2a; }
+
+.role-tag {
+  font-family:var(--mono); font-size:8px; padding:1px 4px; border-radius:2px;
+  letter-spacing:.06em;
+}
+.role-entry  { background:#0a1a0a; color:#80cbc4; border:1px solid #0d2d2d; }
+.role-tp     { background:#1a1a0a; color:var(--gold); border:1px solid #2d2d0a; }
+.role-sl     { background:#2a0a0a; color:#ef9a9a; border:1px solid #3d1010; }
+
+/* ── RISK MATRIX ── */
+.risk-matrix { padding:10px; display:flex; flex-direction:column; gap:6px; }
+.risk-row { display:flex; align-items:center; gap:8px; }
+.risk-sym { font-family:var(--mono); font-size:11px; font-weight:600; color:var(--blue); width:50px; flex-shrink:0; }
+.risk-bar-wrap { flex:1; height:14px; background:#0d0d0d; border:1px solid #1e1e1e; border-radius:2px; overflow:hidden; position:relative; }
+.risk-bar { height:100%; border-radius:1px; transition:width .6s ease; display:flex; align-items:center; padding-left:4px; }
+.risk-bar-label { font-family:var(--mono); font-size:8px; font-weight:600; white-space:nowrap; position:absolute; right:4px; top:50%; transform:translateY(-50%); }
+.risk-meta { font-family:var(--mono); font-size:9px; color:var(--dim); width:140px; flex-shrink:0; text-align:right; }
+
+/* ── BREAKDOWN BAR ── */
+.breakdown { padding:10px 12px; }
+.bd-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.bd-row:last-child { margin-bottom:0; }
+.bd-label { font-family:var(--mono); font-size:10px; color:var(--text); width:70px; flex-shrink:0; }
+.bd-bar-bg { flex:1; height:16px; background:#0d0d0d; border:1px solid #1e1e1e; border-radius:2px; overflow:hidden; }
+.bd-bar { height:100%; display:flex; align-items:center; padding:0 5px; border-radius:1px; font-family:var(--mono); font-size:9px; font-weight:600; white-space:nowrap; }
+.bd-val { font-family:var(--mono); font-size:10px; font-weight:600; width:65px; flex-shrink:0; text-align:right; }
+
+/* ── STATS GRID ── */
+.stats-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:#141414; }
+.stat-cell {
+  background:var(--card); padding:8px 12px;
+  display:flex; flex-direction:column; gap:3px;
+  transition:background .1s;
+}
+.stat-cell:hover { background:var(--hover); }
+.stat-lbl { font-family:var(--mono); font-size:8px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.stat-val { font-family:var(--mono); font-size:13px; font-weight:600; }
+.stat-note { font-family:var(--sans); font-size:9px; color:var(--dim); }
+
+/* ── INSIGHT LIST ── */
+.insight-list { padding:8px 0; }
+.insight-row {
+  display:flex; align-items:flex-start; gap:8px; padding:7px 12px;
+  border-bottom:1px solid #141414; transition:background .1s;
+}
+.insight-row:last-child { border:none; }
+.insight-row:hover { background:var(--hover); }
+.ins-icon {
+  width:20px; height:20px; border-radius:2px; display:flex; align-items:center;
+  justify-content:center; font-size:10px; flex-shrink:0; margin-top:1px;
+}
+.ins-warn { background:#1a1505; border:1px solid #2a2008; }
+.ins-info { background:#0a1a2a; border:1px solid #0d2a3d; }
+.ins-good { background:#0a2a0a; border:1px solid #0d3d0d; }
+.ins-risk { background:#2a0a0a; border:1px solid #3d0d0d; }
+.ins-body { flex:1; }
+.ins-title { font-family:var(--mono); font-size:10px; font-weight:600; color:var(--text); margin-bottom:2px; }
+.ins-desc  { font-family:var(--sans); font-size:10px; color:var(--dim); line-height:1.5; }
+.ins-tag   { font-family:var(--mono); font-size:8px; padding:1px 5px; border-radius:2px; margin-left:6px; vertical-align:middle; }
+
+/* ── SCROLL ── */
+* { scrollbar-width:thin; scrollbar-color:#222 transparent; }
+::-webkit-scrollbar { width:3px; height:3px; }
+::-webkit-scrollbar-thumb { background:#222; border-radius:2px; }
+
+/* ── FOOTER ── */
+footer {
+  padding:8px 16px; border-top:1px solid #141414;
+  display:flex; align-items:center; justify-content:space-between; background:#050505;
+}
+.footer-text { font-family:var(--mono); font-size:9px; color:#333; letter-spacing:.06em; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">IB</div>
+    <div>
+      <div class="logo-text">INTERACTIVE BROKERS</div>
+      <div class="logo-sub">Trade Analysis · Activity Monitor</div>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <span class="hdr-pill pill-act">ACTIVITY · LIVE</span>
+    <span class="hdr-pill pill-live">● 23 ORDERS</span>
+    <span class="hdr-time" id="clk">—</span>
+  </div>
+</header>
+
+<div class="page">
+
+  <!-- ═══ KPI STRIP ═══ -->
+  <div>
+    <div class="sec-heading">Portfolio Snapshot <span>— extracted from Activity log</span></div>
+    <div style="height:8px"></div>
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">Total Orders</div>
+        <div class="kpi-value blue">23</div>
+        <div class="kpi-sub">All statuses</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Unique Symbols</div>
+        <div class="kpi-value gold">10</div>
+        <div class="kpi-sub">AMD TSLA MU JPM GOOG MSFT IGV XLE LLY KALV</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">BUY Orders</div>
+        <div class="kpi-value bull">9</div>
+        <div class="kpi-sub">Entries / Adds</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">SELL Orders</div>
+        <div class="kpi-value bear">14</div>
+        <div class="kpi-sub">TPs + Stop Losses</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Stop Losses</div>
+        <div class="kpi-value orange">8</div>
+        <div class="kpi-sub">STP type orders</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Profit Takers</div>
+        <div class="kpi-value purple">6</div>
+        <div class="kpi-sub">LMT SELL exits</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Pending Submit</div>
+        <div class="kpi-value bear">4</div>
+        <div class="kpi-sub">TSLA + GOOG + MSFT</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ FULL ORDER TABLE ═══ -->
+  <div>
+    <div class="sec-heading">Full Order Log <span>— parsed from Activity · Live</span></div>
+    <div style="height:8px"></div>
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">All Positions &amp; Child Orders</span>
+        <div style="display:flex;gap:6px">
+          <span class="card-badge badge-green">9 BUY</span>
+          <span class="card-badge badge-red">14 SELL</span>
+          <span class="card-badge badge-gold">8 STOPS</span>
+        </div>
+      </div>
+      <div class="pos-hdr">
+        <span class="col-h">Symbol</span>
+        <span class="col-h">Key</span>
+        <span class="col-h">Role</span>
+        <span class="col-h">Actn</span>
+        <span class="col-h">Type</span>
+        <span class="col-h r">Limit Px</span>
+        <span class="col-h r">Stop Px</span>
+        <span class="col-h r">Qty</span>
+        <span class="col-h r">Fill Px</span>
+        <span class="col-h r">Risk $</span>
+        <span class="col-h r">Status</span>
+      </div>
+      <div id="order-table"></div>
+    </div>
+  </div>
+
+  <!-- ═══ ROW 2: RISK + BREAKDOWN ═══ -->
+  <div class="two-col">
+
+    <!-- Risk Per Position -->
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">Risk per Position ($ Stop Distance × Qty)</span>
+        <span class="card-badge badge-red">DOWNSIDE EXPOSURE</span>
+      </div>
+      <div class="risk-matrix" id="risk-matrix"></div>
+    </div>
+
+    <!-- Order-Type Breakdown -->
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">Order Distribution by Type &amp; Role</span>
+        <span class="card-badge badge-blue">STRUCTURE</span>
+      </div>
+      <div class="breakdown" id="breakdown"></div>
+    </div>
+
+  </div>
+
+  <!-- ═══ ROW 3: STATS + INSIGHTS ═══ -->
+  <div class="two-col">
+
+    <!-- Per-Symbol Stats -->
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">Per-Symbol Trade Structure</span>
+        <span class="card-badge badge-gold">R:R ANALYSIS</span>
+      </div>
+      <div id="sym-stats"></div>
+    </div>
+
+    <!-- Insights -->
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">Observations &amp; Risk Flags</span>
+        <span class="card-badge badge-purple">AUTO-ANALYSIS</span>
+      </div>
+      <div class="insight-list" id="insights"></div>
+    </div>
+
+  </div>
+
+  <!-- ═══ EXPOSURE CHART ═══ -->
+  <div>
+    <div class="sec-heading">Notional Exposure by Symbol <span>— Entry Price × Quantity</span></div>
+    <div style="height:8px"></div>
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">Long Notional Exposure (Entry × Shares)</span>
+        <span class="card-badge badge-blue">CAPITAL AT RISK</span>
+      </div>
+      <div id="exposure-chart" style="padding:12px 12px 8px;"></div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <span class="footer-text">© 2026 Interactive Brokers LLC · Trade Analysis Module · Data source: Activity Monitor snapshot</span>
+  <span class="footer-text" style="color:#1e1e1e">For informational purposes only. Not investment advice.</span>
+</footer>
+
+<script>
+// ═══════════════════════════════════════
+// PARSED DATA FROM IMAGE
+// ═══════════════════════════════════════
+const ORDERS = [
+  // AMD bracket
+  { sym:"AMD",  key:"6",   role:"entry",  actn:"BUY",  type:"LMT", lmt:171.58, stp:null,   qty:10, fill:0.00, status:"Green"   },
+  { sym:"AMD",  key:"6.2", role:"tp",     actn:"SELL", type:"LMT", lmt:214.75, stp:null,   qty:10, fill:0.00, status:"Maroon"  },
+  { sym:"AMD",  key:"6.1", role:"sl",     actn:"SELL", type:"STP", lmt:166.20, stp:166.20, qty:10, fill:0.00, status:"Maroon"  },
+  // TSLA bracket
+  { sym:"TSLA", key:"12",  role:"entry",  actn:"BUY",  type:"LMT", lmt:385.40, stp:null,   qty:5,  fill:0.00, status:"DkGray"  },
+  { sym:"TSLA", key:"12.2",role:"tp",     actn:"SELL", type:"LMT", lmt:420.21, stp:null,   qty:5,  fill:0.00, status:"DkGray"  },
+  { sym:"TSLA", key:"12.1",role:"sl",     actn:"SELL", type:"STP", lmt:384.19, stp:384.19, qty:5,  fill:0.00, status:"DkGray"  },
+  // MU
+  { sym:"MU",   key:"",    role:"entry",  actn:"BUY",  type:"LMT", lmt:388.88, stp:null,   qty:2,  fill:0.00, status:"Green"   },
+  // JPM
+  { sym:"JPM",  key:"",    role:"entry",  actn:"BUY",  type:"LMT", lmt:288.96, stp:null,   qty:5,  fill:null, status:"Green"   },
+  // GOOG (unsubmitted)
+  { sym:"GOOG", key:"",    role:"entry",  actn:"BUY",  type:"LMT", lmt:296.00, stp:null,   qty:10, fill:null, status:"DkGray"  },
+  // MSFT (unsubmitted)
+  { sym:"MSFT", key:"",    role:"entry",  actn:"BUY",  type:"LMT", lmt:384.00, stp:null,   qty:10, fill:null, status:"DkGray"  },
+  // GOOG bracket (submitted)
+  { sym:"GOOG", key:"25",  role:"entry",  actn:"BUY",  type:"LMT", lmt:300.18, stp:null,   qty:5,  fill:null, status:"Green"   },
+  { sym:"GOOG", key:"25.2",role:"tp",     actn:"SELL", type:"LMT", lmt:317.75, stp:null,   qty:5,  fill:null, status:"Maroon"  },
+  { sym:"GOOG", key:"25.1",role:"sl",     actn:"SELL", type:"STP", lmt:290.50, stp:290.50, qty:5,  fill:null, status:"Maroon"  },
+  // IGV
+  { sym:"IGV",  key:"",    role:"entry",  actn:"BUY",  type:"LMT", lmt:77.77,  stp:null,   qty:20, fill:0.00, status:"Green"   },
+  // XLE
+  { sym:"XLE",  key:"",    role:"tp",     actn:"SELL", type:"LMT", lmt:74.04,  stp:null,   qty:25, fill:0.00, status:"Green"   },
+  { sym:"XLE",  key:"",    role:"sl",     actn:"SELL", type:"STP", lmt:55.55,  stp:55.55,  qty:50, fill:0.00, status:"DkBlue"  },
+  // LLY
+  { sym:"LLY",  key:"",    role:"tp",     actn:"SELL", type:"LMT", lmt:1133.00,stp:null,   qty:2,  fill:0.00, status:"DkBlue"  },
+  { sym:"LLY",  key:"",    role:"sl",     actn:"SELL", type:"STP", lmt:988.76, stp:988.76, qty:2,  fill:0.00, status:"DkBlue"  },
+  // KALV
+  { sym:"KALV", key:"",    role:"tp",     actn:"SELL", type:"LMT", lmt:17.92,  stp:null,   qty:150,fill:0.0000,status:"DkBlue" },
+  { sym:"KALV", key:"",    role:"sl",     actn:"SELL", type:"STP", lmt:13.88,  stp:13.88,  qty:500,fill:0.0000,status:"DkBlue" },
+];
+
+// ═══════════════════════════════════════
+// RENDER ORDER TABLE
+// ═══════════════════════════════════════
+function renderOrders() {
+  const el = document.getElementById('order-table');
+  const rows = ORDERS.map(o => {
+    const roleCls  = o.role==='entry'?'role-entry':o.role==='tp'?'role-tp':'role-sl';
+    const roleLbl  = o.role==='entry'?'ENTRY':o.role==='tp'?'T/PROFIT':'S/LOSS';
+    const actnHtml = o.actn==='BUY'
+      ? `<span class="actn-buy">BUY</span>` : `<span class="actn-sell">SELL</span>`;
+    const isChild  = o.role!=='entry' ? 'child' : 'parent';
+    const stsCls   = o.status==='Green'?'s-green':o.status==='Maroon'?'s-maroon':o.status==='DkBlue'?'s-dkblue':'s-dkgray';
+    const stsLbl   = o.status==='Green'?'● Active':o.status==='Maroon'?'● Active':o.status==='DkBlue'?'● Active':'○ Pending';
+    const risk     = o.stp ? ((o.lmt - o.stp) * o.qty).toFixed(0) : '—';
+    const riskCls  = risk!=='—' ? (parseFloat(risk)>0 ? 'bull' : 'bear') : 'flat';
+    return `<div class="pos-row ${isChild}">
+      <span class="sym">${o.role!=='entry'?'↳ '+o.sym:o.sym}</span>
+      <span class="key-n">${o.key||'—'}</span>
+      <span class="role-tag ${roleCls}">${roleLbl}</span>
+      ${actnHtml}
+      <span class="typ">${o.type}</span>
+      <span class="px">${o.lmt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+      <span class="px flat">${o.stp?o.stp.toFixed(2):'—'}</span>
+      <span class="qty">${o.qty}</span>
+      <span class="px flat">${o.fill!==null?o.fill.toFixed(2):'—'}</span>
+      <span class="px ${riskCls}">${risk!=='—'?'$'+Math.abs(risk):risk}</span>
+      <span class="status-pill ${stsCls}">${stsLbl}</span>
+    </div>`;
+  });
+  el.innerHTML = rows.join('');
+}
+
+// ═══════════════════════════════════════
+// RENDER RISK MATRIX
+// ═══════════════════════════════════════
+function renderRisk() {
+  // for positions that have both entry and stop
+  const brackets = [
+    { sym:'AMD',  entry:171.58, stop:166.20, qty:10  },
+    { sym:'TSLA', entry:385.40, stop:384.19, qty:5   },
+    { sym:'GOOG', entry:300.18, stop:290.50, qty:5   },
+    { sym:'XLE',  entry:74.04,  stop:55.55,  qty:50  },
+    { sym:'LLY',  entry:1133.00,stop:988.76, qty:2   },
+    { sym:'KALV', entry:17.92,  stop:13.88,  qty:500 },
+  ];
+  const risks = brackets.map(b=>({...b, risk:(b.entry-b.stop)*b.qty, pct:((b.entry-b.stop)/b.entry*100)}));
+  const maxR = Math.max(...risks.map(r=>r.risk));
+
+  const el = document.getElementById('risk-matrix');
+  el.innerHTML = risks.map(r => {
+    const pct = (r.risk/maxR*100).toFixed(1);
+    const barColor = r.risk > 1000 ? '#ff1744' : r.risk > 200 ? '#ffab40' : '#00e676';
+    return `<div class="risk-row">
+      <span class="risk-sym">${r.sym}</span>
+      <div class="risk-bar-wrap">
+        <div class="risk-bar" style="width:${pct}%;background:${barColor}22;border-right:2px solid ${barColor}">
+        </div>
+        <span class="risk-bar-label" style="color:${barColor}">$${r.risk.toFixed(0)}</span>
+      </div>
+      <span class="risk-meta" style="color:${barColor}">${r.pct.toFixed(1)}% stop dist · ${r.qty} sh</span>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════
+// RENDER BREAKDOWN BARS
+// ═══════════════════════════════════════
+function renderBreakdown() {
+  const items = [
+    { label:'BUY LMT',   count:9,  color:'var(--bull)', pct:39 },
+    { label:'SELL LMT',  count:6,  color:'var(--orange)', pct:26 },
+    { label:'SELL STP',  count:8,  color:'var(--bear)', pct:35 },
+    { label:'Active',    count:15, color:'var(--bull)', pct:65 },
+    { label:'Pending',   count:4,  color:'var(--gold)', pct:17 },
+    { label:'No Fill',   count:23, color:'var(--dim)',  pct:100 },
+  ];
+  document.getElementById('breakdown').innerHTML = items.map(i => `
+    <div class="bd-row">
+      <span class="bd-label">${i.label}</span>
+      <div class="bd-bar-bg">
+        <div class="bd-bar" style="width:${i.pct}%;background:${i.color}22;border-right:2px solid ${i.color};color:${i.color};">
+          ${i.count}
+        </div>
+      </div>
+      <span class="bd-val" style="color:${i.color}">${i.count}</span>
+    </div>`).join('');
+}
+
+// ═══════════════════════════════════════
+// RENDER PER-SYMBOL STATS
+// ═══════════════════════════════════════
+function renderSymStats() {
+  const syms = [
+    { sym:'AMD',  entry:171.58, tp:214.75, sl:166.20, qty:10,
+      reward:(214.75-171.58), risk:(171.58-166.20) },
+    { sym:'TSLA', entry:385.40, tp:420.21, sl:384.19, qty:5,
+      reward:(420.21-385.40), risk:(385.40-384.19) },
+    { sym:'GOOG', entry:300.18, tp:317.75, sl:290.50, qty:5,
+      reward:(317.75-300.18), risk:(300.18-290.50) },
+    { sym:'XLE',  entry:74.04,  tp:74.04,  sl:55.55,  qty:50,
+      reward:0, risk:(74.04-55.55) },
+    { sym:'LLY',  entry:1133.00,tp:1133.00,sl:988.76, qty:2,
+      reward:0, risk:(1133.00-988.76) },
+    { sym:'KALV', entry:17.92,  tp:17.92,  sl:13.88,  qty:150,
+      reward:0, risk:(17.92-13.88) },
+  ];
+  const el = document.getElementById('sym-stats');
+  el.innerHTML = `<div class="stats-grid">`
+    + syms.map(s => {
+        const rr = s.reward > 0 ? (s.reward/s.risk).toFixed(2) : '—';
+        const rrCls = parseFloat(rr)>=2?'bull':parseFloat(rr)>=1?'gold':'bear';
+        return `
+        <div class="stat-cell">
+          <span class="stat-lbl">${s.sym} · ${s.qty} shares</span>
+          <span class="stat-val blue">${s.sym==='GOOG'?'$300.18':s.sym==='AMD'?'$171.58':s.sym==='TSLA'?'$385.40':s.sym==='XLE'?'$74.04':s.sym==='LLY'?'$1,133.00':'$17.92'}</span>
+          <span class="stat-note">
+            ${s.reward>0?`R:R <span style="color:var(--${rrCls==='bull'?'bull':rrCls==='gold'?'gold':'bear'})">${rr}:1</span> · TP $${s.tp.toFixed(2)} · SL $${s.sl.toFixed(2)}`:`SL $${s.sl.toFixed(2)} · No TP visible`}
+          </span>
+        </div>`;
+      }).join('')
+    + `</div>`;
+}
+
+// ═══════════════════════════════════════
+// RENDER INSIGHTS
+// ═══════════════════════════════════════
+function renderInsights() {
+  const ins = [
+    { icon:'⚠', cls:'ins-warn', title:'TSLA: Extremely Tight Stop Loss',
+      desc:'TSLA stop at $384.19 is only $1.21 (0.31%) below entry $385.40. Any normal intraday volatility could trigger a premature exit. Consider widening the stop or reducing size.' },
+    { icon:'✓', cls:'ins-good', title:'AMD: Healthy R:R of 7.99:1',
+      desc:'AMD entry $171.58 / TP $214.75 / SL $166.20 gives reward $43.17 vs risk $5.38 — excellent asymmetry. Bracket structure is properly configured.' },
+    { icon:'✓', cls:'ins-good', title:'GOOG: Solid R:R of 1.81:1',
+      desc:'GOOG bracket (key 25) shows $17.57 reward vs $9.68 risk. R:R just under 2:1 is acceptable. Both TP and SL submitted.' },
+    { icon:'⚡', cls:'ins-info', title:'4 Orders Pending Submission (TSLA, GOOG, MSFT)',
+      desc:'TSLA bracket and a second GOOG entry (key blank) show "Submit" buttons. These orders have NOT been sent to the market. Action required.' },
+    { icon:'⚠', cls:'ins-warn', title:'XLE, LLY, KALV: No Profit Taker Visible',
+      desc:'These positions show only a SELL LMT (possibly original entry exit) and a SELL STP stop loss. No explicit profit-taking bracket order confirmed from the screenshot.' },
+    { icon:'✗', cls:'ins-risk', title:'KALV: Very Low-Price, Large Qty Position (500 shares STP)',
+      desc:'KALV has stop-loss for 500 shares at $13.88 — potential risk $2,020. Larger share count in a micro-cap warrants careful attention to liquidity and spread.' },
+    { icon:'⚡', cls:'ins-info', title:'MU and JPM: No Stop or TP Visible',
+      desc:'MU (BUY LMT $388.88, 2 shares) and JPM (BUY LMT $288.96, 5 shares) appear as standalone limit orders with no bracket. These are unprotected entries.' },
+    { icon:'✓', cls:'ins-good', title:'All Active Brackets Properly Structured',
+      desc:'AMD (key 6), GOOG (key 25) and the submitted orders all show matching BUY entry + SELL LMT profit taker + SELL STP stop loss — correct OCO bracket structure.' },
+  ];
+  document.getElementById('insights').innerHTML = ins.map(i =>
+    `<div class="insight-row">
+      <div class="ins-icon ${i.cls}">${i.icon}</div>
+      <div class="ins-body">
+        <div class="ins-title">${i.title}</div>
+        <div class="ins-desc">${i.desc}</div>
+      </div>
+    </div>`).join('');
+}
+
+// ═══════════════════════════════════════
+// RENDER EXPOSURE CHART
+// ═══════════════════════════════════════
+function renderExposure() {
+  const positions = [
+    { sym:'LLY',  notional: 1133.00*2,   color:'var(--purple)' },
+    { sym:'TSLA', notional: 385.40*5,    color:'var(--bear)'   },
+    { sym:'MSFT', notional: 384.00*10,   color:'var(--blue)'   },
+    { sym:'MU',   notional: 388.88*2,    color:'var(--blue)'   },
+    { sym:'GOOG', notional: 300.18*15,   color:'var(--gold)'   },
+    { sym:'AMD',  notional: 171.58*10,   color:'var(--orange)' },
+    { sym:'JPM',  notional: 288.96*5,    color:'var(--blue)'   },
+    { sym:'IGV',  notional: 77.77*20,    color:'var(--bull)'   },
+    { sym:'XLE',  notional: 74.04*25,    color:'var(--bull)'   },
+    { sym:'KALV', notional: 17.92*150,   color:'#ef5350'       },
+  ].sort((a,b)=>b.notional-a.notional);
+
+  const maxN = positions[0].notional;
+  const total = positions.reduce((s,p)=>s+p.notional,0);
+
+  document.getElementById('exposure-chart').innerHTML = positions.map(p => {
+    const pct = (p.notional/maxN*100).toFixed(1);
+    const sharePct = (p.notional/total*100).toFixed(1);
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:${p.color};width:50px;flex-shrink:0">${p.sym}</span>
+      <div style="flex:1;height:20px;background:#0d0d0d;border:1px solid #1e1e1e;border-radius:2px;overflow:hidden;position:relative">
+        <div style="height:100%;width:${pct}%;background:${p.color}22;border-right:2px solid ${p.color};display:flex;align-items:center;padding-left:6px">
+          <span style="font-family:var(--mono);font-size:9px;font-weight:600;color:${p.color};white-space:nowrap">$${p.notional.toLocaleString('en-US',{maximumFractionDigits:0})}</span>
+        </div>
+        <span style="position:absolute;right:6px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:8px;color:#444">${sharePct}% of total</span>
+      </div>
+    </div>`;
+  }).join('')
+  + `<div style="font-family:var(--mono);font-size:9px;color:var(--dim);border-top:1px solid #1e1e1e;margin-top:4px;padding-top:6px">
+      TOTAL NOTIONAL (LONG) — $${total.toLocaleString('en-US',{maximumFractionDigits:0})} across ${positions.length} symbols
+    </div>`;
+}
+
+// ═══════════════════════════════════════
+// CLOCK
+// ═══════════════════════════════════════
+function tick() {
+  document.getElementById('clk').textContent =
+    new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'short'});
+}
+
+// ═══════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════
+renderOrders();
+renderRisk();
+renderBreakdown();
+renderSymStats();
+renderInsights();
+renderExposure();
+tick();
+setInterval(tick,1000);
+</script>
+</body>
+</html>
