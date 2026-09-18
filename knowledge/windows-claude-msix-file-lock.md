@@ -2,7 +2,7 @@
 title: "Windows: Claude Desktop MSIX update fails — 'Another program is currently using this file'"
 kind: technical
 created_utc: 2026-09-18T05:31:33Z
-verified_utc: 2026-09-18T05:45:00Z
+verified_utc: 2026-09-18T05:52:00Z
 expires_utc: 2026-09-25T05:31:33Z
 ttl_days: 7
 ---
@@ -136,6 +136,30 @@ The observed session was `Windows PowerShell (x86)`. Two WOW64 effects apply to 
 Simplest mitigation: run the whole procedure from 64-bit `Windows PowerShell`
 (Start menu entry **without** "(x86)"), which removes the question entirely.
 
+### Hazard: never write `Start` from an undefined variable
+
+A restore snippet of the form
+`Set-ItemProperty ... -Name Start -Value $orig` is only safe in the **same**
+shell session that captured `$orig`. Pasted into a fresh window, `$orig` is
+`$null`. Observed on a real machine 2026-09-18: the command ran with **no error
+shown**, so either PowerShell coerced `$null` to `0` (`[int]$null` is `0` [S24])
+and wrote it, or the parameter binder accepted it as a no-op. **The screenshot
+alone cannot distinguish the two** — the value has to be read back.
+
+`Start = 0` is `SERVICE_BOOT_START`, which is **valid only for driver services**,
+not for a Win32 service like `CoworkVMService`. [S25][S26] It is an invalid
+configuration for this service even though the running system tolerates it (the
+subsequent `Start-Service` succeeded, so nothing was bricked).
+
+**Rule: always write the literal, always pass `-Type DWord`, always read back.**
+
+```powershell
+$key = 'HKLM:\SYSTEM\CurrentControlSet\Services\CoworkVMService'
+(Get-ItemProperty $key).Start                       # read BEFORE
+Set-ItemProperty -Path $key -Name Start -Value 2 -Type DWord   # 2 = Automatic
+(Get-ItemProperty $key).Start                       # read AFTER
+```
+
 ### Caveat
 
 Disabling `CoworkVMService` disables the Claude Cowork feature. Issue #77618
@@ -172,6 +196,10 @@ local session history may not survive.
 - **Whether the `Appx` module misbehaves in 32-bit PowerShell on 64-bit Windows**
   was searched for and **not answered** by any source reached. Treat it as unknown;
   the recommendation to use a 64-bit shell is precaution, not a documented defect.
+- **Whether `Set-ItemProperty -Value $null` writes 0 or is rejected by the
+  parameter binder** was NOT resolved. No reached source documents the edge case,
+  and no test machine was available here. Both branches are listed above because
+  the evidence does not choose between them.
 - **The actual security descriptor of `CoworkVMService` was not read.** Nobody has
   run `sc.exe sdshow CoworkVMService` here. The DACL explanation is inference
   consistent with the observed stop-ok / configure-denied split, not a direct read.
@@ -204,6 +232,9 @@ local session history may not survive.
 | S21 | Issue #91736 — cowork-svc.exe in an SCM restart loop, only reboot recovers (0x80070020) | https://github.com/anthropics/claude-code/issues/91736 | 2026-09-18T05:38Z | WebSearch |
 | S22 | Registry Redirector — Microsoft Learn | https://learn.microsoft.com/en-us/windows/win32/winprog64/registry-redirector | 2026-09-18T05:44Z | WebSearch (fetch egress-blocked) |
 | S23 | Registry Keys Affected by WOW64 — Microsoft Learn | https://learn.microsoft.com/en-us/windows/win32/winprog64/shared-registry-keys | 2026-09-18T05:44Z | WebSearch (fetch egress-blocked) |
+| S24 | PowerShell int conversion: `[int]$null` is 0 | https://powershellfaqs.com/powershell-cannot-convert-value-to-type-system-int32/ | 2026-09-18T05:51Z | WebSearch |
+| S25 | CreateServiceA — SERVICE_BOOT_START valid only for driver services | https://learn.microsoft.com/en-us/windows/win32/api/Winsvc/nf-winsvc-createservicea | 2026-09-18T05:51Z | WebSearch (fetch egress-blocked) |
+| S26 | Service Startup — Microsoft Learn | https://learn.microsoft.com/en-us/windows/win32/services/service-startup | 2026-09-18T05:51Z | WebSearch (fetch egress-blocked) |
 | S13 | Issue #85689 — failed auto-update falls back to uninstall+reinstall, silently destroying app data | https://github.com/anthropics/claude-code/issues/85689 | 2026-09-18T05:30Z | WebSearch |
 
 ## Verification log
@@ -227,3 +258,5 @@ local session history may not survive.
 - `2026-09-18T05:44Z` — user screenshot: title bar `Administrator: Windows PowerShell (x86)`, Stop-Service clean, Set-Service denied → **elevation confirmed**, DACL inference upgraded
 - `2026-09-18T05:44Z` — WebSearch WOW64 registry redirection scope → **ok**, HKLM\Software redirected; HKLM\SYSTEM not in the redirected set
 - `2026-09-18T05:44Z` — WebSearch Appx module under 32-bit PowerShell → **no source answered the question**; left UNVERIFIED
+- `2026-09-18T05:51Z` — WebSearch `Set-ItemProperty -Value $null` on REG_DWORD → **inconclusive**; `[int]$null` = 0 confirmed, binder behaviour not documented
+- `2026-09-18T05:51Z` — WebSearch service Start=0 semantics → **ok**, SERVICE_BOOT_START is driver-only (S25, S26)
