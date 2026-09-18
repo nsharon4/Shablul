@@ -2,7 +2,7 @@
 title: "Windows: Claude Desktop MSIX update fails — 'Another program is currently using this file'"
 kind: technical
 created_utc: 2026-09-18T05:31:33Z
-verified_utc: 2026-09-18T05:55:00Z
+verified_utc: 2026-09-18T06:02:00Z
 expires_utc: 2026-09-25T05:31:33Z
 ttl_days: 7
 ---
@@ -160,6 +160,21 @@ subsequent `Start-Service` succeeded, so nothing was bricked).
 
 **Rule: always write the literal, always pass `-Type DWord`, always read back.**
 
+### Pin the expected value to the stage
+
+A bare "read it back, expect 2" instruction is ambiguous once the procedure has
+more than one write in it — the correct value depends on where you are. State the
+stage with the expectation:
+
+| Stage | `Start` | `Get-Service` StartType |
+|---|---|---|
+| Diagnosis, before any change | `2` | Automatic |
+| After the disable block, before the package update | `4` | Disabled |
+| After restore | `2` | Automatic |
+
+Observed 2026-09-18: `Original Start = 0` → `New Start = 4` → `Stopped / Disabled`
+→ independent read-back `4`. Consistent throughout.
+
 ```powershell
 $key = 'HKLM:\SYSTEM\CurrentControlSet\Services\CoworkVMService'
 (Get-ItemProperty $key).Start                       # read BEFORE
@@ -264,3 +279,4 @@ local session history may not survive.
 - `2026-09-18T05:51Z` — WebSearch `Set-ItemProperty -Value $null` on REG_DWORD → **inconclusive**; `[int]$null` = 0 confirmed, binder behaviour not documented
 - `2026-09-18T05:51Z` — WebSearch service Start=0 semantics → **ok**, SERVICE_BOOT_START is driver-only (S25, S26)
 - `2026-09-18T05:55Z` — user screenshot: `Original Start = 0`, `New Start = 4`, `CoworkVMService Stopped Disabled`, Get-Process empty → **`-Value $null` writes 0 CONFIRMED**; **32-bit write to HKLM\SYSTEM reaches the real key CONFIRMED**; disable-and-stop procedure verified working
+- `2026-09-18T06:02Z` — user read-back returned `4` at the post-disable stage, matching the disable block; earlier "expect 2" guidance was stage-ambiguous and is now pinned per stage in this note
