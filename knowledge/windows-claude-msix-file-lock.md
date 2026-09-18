@@ -2,7 +2,7 @@
 title: "Windows: Claude Desktop MSIX update fails — 'Another program is currently using this file'"
 kind: technical
 created_utc: 2026-09-18T05:31:33Z
-verified_utc: 2026-09-18T06:02:00Z
+verified_utc: 2026-09-18T06:10:00Z
 expires_utc: 2026-09-25T05:31:33Z
 ttl_days: 7
 ---
@@ -58,7 +58,8 @@ Stop-Process -Name chrome-native-host  -Force -ErrorAction SilentlyContinue
 `cmd.exe` equivalent: `sc stop CoworkVMService` then
 `taskkill /IM claude.exe /F` and `taskkill /IM cowork-svc.exe /F`. [S3][S4]
 
-Then re-apply the update (Microsoft Store → Library → Get updates). Re-enable the
+Then re-apply the update by **launching Claude** — see the distribution note below.
+**Not** via the Microsoft Store. Re-enable the
 service afterwards with `Set-Service CoworkVMService -StartupType Automatic` if you
 use Claude Cowork.
 
@@ -188,6 +189,37 @@ Disabling `CoworkVMService` disables the Claude Cowork feature. Issue #77618
 reports the service being *found* in a Disabled state as its own failure mode, so
 this is a temporary measure for the update window, not a permanent setting. [S20]
 
+## How the update is actually delivered — NOT the Microsoft Store
+
+**Correction.** Earlier guidance in this note pointed at
+Microsoft Store → Library → Get updates. That is **wrong for this app.**
+
+Claude Desktop for Windows is distributed as a **sideloaded, developer-signed
+MSIX package**, not through the Microsoft Store. [S27] It therefore never appears
+in the Store's Library, and a Library search for it correctly returns nothing —
+confirmed on the affected machine 2026-09-18.
+
+Updates come from an **in-app self-updater**: the app quits itself, swaps its MSIX
+package, and relaunches, with a check roughly every 6 hours. [S27][S28] The failure
+mode in this note is precisely that path — the updater downloads and **stages** the
+new version, then registration is deferred because the running app holds file
+locks, so the update never completes. [S27]
+
+**So the step after releasing the lock is simply to launch Claude**, not to visit
+the Store.
+
+Inspect the package state with the `Appx` module, from a 64-bit shell:
+
+```powershell
+Get-AppxPackage -Name *Claude* | Select-Object Name,Version,PackageFullName,Status,InstallLocation
+```
+
+A `Status` of `Staged` or `NeedsRemediation` rather than `Ok` indicates a package
+that registered incompletely. [S29][S30]
+
+Anthropic moved the Windows installer from the older Squirrel `.exe` format to MSIX
+around February 2026, alongside shipping Cowork. [S29]
+
 ## Do NOT uninstall and reinstall as a first resort
 
 A failed MSIX auto-update that falls back to uninstall+reinstall has been reported
@@ -218,6 +250,11 @@ local session history may not survive.
 - **Whether the `Appx` module misbehaves in 32-bit PowerShell on 64-bit Windows**
   was searched for and **not answered** by any source reached. Treat it as unknown;
   the recommendation to use a 64-bit shell is precaution, not a documented defect.
+- **The official distribution/update documentation was not read directly.**
+  `support.claude.com` and `downloads.claude.ai` are both **EGRESS_BLOCKED**. The
+  sideloaded-MSIX and self-updater claims rest on search summarisation of upstream
+  issues, corroborated by the machine-side observation that Claude is absent from
+  the Store Library.
 - **The actual security descriptor of `CoworkVMService` was not read.** Nobody has
   run `sc.exe sdshow CoworkVMService` here. The DACL explanation is inference
   consistent with the observed stop-ok / configure-denied split, not a direct read.
@@ -253,6 +290,10 @@ local session history may not survive.
 | S24 | PowerShell int conversion: `[int]$null` is 0 | https://powershellfaqs.com/powershell-cannot-convert-value-to-type-system-int32/ | 2026-09-18T05:51Z | WebSearch |
 | S25 | CreateServiceA — SERVICE_BOOT_START valid only for driver services | https://learn.microsoft.com/en-us/windows/win32/api/Winsvc/nf-winsvc-createservicea | 2026-09-18T05:51Z | WebSearch (fetch egress-blocked) |
 | S26 | Service Startup — Microsoft Learn | https://learn.microsoft.com/en-us/windows/win32/services/service-startup | 2026-09-18T05:51Z | WebSearch (fetch egress-blocked) |
+| S27 | Issue #63397 — MSIX auto-update silently fails 0x80073D02 while app is running (sideloaded, dev-signed MSIX; self-update mechanism) | https://github.com/anthropics/claude-code/issues/63397 | 2026-09-18T06:08Z | WebSearch |
+| S28 | Issue #92246 — desktop app self-updates and restarts over a running session | https://github.com/anthropics/claude-code/issues/92246 | 2026-09-18T06:08Z | WebSearch |
+| S29 | Issue #47877 — installation broken, MSIX stuck in Staged state; Squirrel→MSIX transition ~Feb 2026 | https://github.com/anthropics/claude-code/issues/47877 | 2026-09-18T06:08Z | WebSearch |
+| S30 | Deploy Claude Desktop for Windows — Claude Help Center | https://support.claude.com/en/articles/12622703-deploy-claude-desktop-for-windows | 2026-09-18T06:08Z | WebSearch (fetch egress-blocked) |
 | S13 | Issue #85689 — failed auto-update falls back to uninstall+reinstall, silently destroying app data | https://github.com/anthropics/claude-code/issues/85689 | 2026-09-18T05:30Z | WebSearch |
 
 ## Verification log
@@ -280,3 +321,7 @@ local session history may not survive.
 - `2026-09-18T05:51Z` — WebSearch service Start=0 semantics → **ok**, SERVICE_BOOT_START is driver-only (S25, S26)
 - `2026-09-18T05:55Z` — user screenshot: `Original Start = 0`, `New Start = 4`, `CoworkVMService Stopped Disabled`, Get-Process empty → **`-Value $null` writes 0 CONFIRMED**; **32-bit write to HKLM\SYSTEM reaches the real key CONFIRMED**; disable-and-stop procedure verified working
 - `2026-09-18T06:02Z` — user read-back returned `4` at the post-disable stage, matching the disable block; earlier "expect 2" guidance was stage-ambiguous and is now pinned per stage in this note
+- `2026-09-18T06:08Z` — user screenshot: Store Library search "Cla" returns only ChatGPT Classic, **no Claude** → corroborates sideloaded, non-Store distribution
+- `2026-09-18T06:08Z` — WebSearch Claude Desktop MSIX update mechanism → **ok**, sideloaded dev-signed MSIX + in-app self-updater (~6h checks), S27–S29
+- `2026-09-18T06:09Z` — WebFetch support.claude.com → **EGRESS_BLOCKED**
+- `2026-09-18T06:09Z` — WebFetch downloads.claude.ai → **EGRESS_BLOCKED**
