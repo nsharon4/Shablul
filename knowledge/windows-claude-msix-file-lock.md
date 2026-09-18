@@ -2,7 +2,7 @@
 title: "Windows: Claude Desktop MSIX update fails — 'Another program is currently using this file'"
 kind: technical
 created_utc: 2026-09-18T05:31:33Z
-verified_utc: 2026-09-18T06:20:00Z
+verified_utc: 2026-09-18T06:28:00Z
 expires_utc: 2026-09-25T05:31:33Z
 ttl_days: 7
 ---
@@ -64,6 +64,42 @@ Get-Process | Where-Object { $_.Path -like '*WindowsApps*Claude*' } |
 Get-CimInstance Win32_Process |
   Where-Object { $_.CommandLine -like '*WindowsApps*Claude*' } |
   Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | Format-Table -Wrap
+```
+
+#### Two traps in the survivor sweep — both hit in the field
+
+Observed 2026-09-18, running both queries back to back on the same machine:
+
+1. **`Get-Process | Where-Object { $_.Path -like ... }` returned nothing while
+   `Get-CimInstance Win32_Process` found `cowork-svc.exe` running from the package
+   directory.** The `Get-Process` form **missed a process that provably existed**.
+   Do not treat its empty result as evidence of absence. (Why it missed it —
+   reading `.Path` of a 64-bit process from a 32-bit shell, or the process running
+   as LocalSystem — is **inference, not tested.**)
+2. **Filtering on `CommandLine -like '*WindowsApps*Claude*'` misses the very
+   processes being hunted.** An orphaned `node.exe` running an MCP server has a
+   command line that names the script, not the package path. The filter was wrong
+   for the job.
+
+A sweep that does not fall into either trap enumerates by name and checks whether
+the parent is still alive, from a **64-bit** shell:
+
+```powershell
+$alive = (Get-CimInstance Win32_Process).ProcessId
+Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -match '^(node|cmd|powershell|pwsh|ssh|python|bash|claude|cowork-svc|chrome-native-host)\.exe$' } |
+  Select-Object ProcessId, ParentProcessId, Name,
+    @{n='ParentAlive'; e={ $_.ParentProcessId -in $alive }},
+    CreationDate, ExecutablePath, CommandLine |
+  Format-Table -Wrap
+```
+
+`ParentAlive: False` on a package-related process is the orphan signature. A
+`cowork-svc.exe` whose parent is `services.exe` is the service running normally,
+not an orphan — check the parent before killing anything:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "ProcessId=<parent pid>" | Select-Object ProcessId,Name,ExecutablePath
 ```
 
 Confirm the diagnosis from the event log — `AppModel-Runtime` IDs **215 / 208**: [S31][S35]
@@ -391,3 +427,5 @@ local session history may not survive.
 - `2026-09-18T06:18Z` — user output: `Status: Ok`, `Version: 2.110.1.0` unchanged, no Claude processes, launch still fails → **re-diagnosed as Mode B (orphaned container), not Mode A (file lock)**
 - `2026-09-18T06:18Z` — WebSearch issue #92961 → **ok**, matches this signature exactly (crash, no pending update, no usermode holder)
 - `2026-09-18T06:18Z` — WebSearch 0x80070020 orphaned Silo/Job → **ok**, S31–S34, S36; documented recovery is logoff or reboot
+- `2026-09-18T06:28Z` — user output: `Get-Process` path filter returned nothing while CIM found `cowork-svc.exe` in the package dir → **`Get-Process` sweep proven unreliable here**; CommandLine filter also identified as unable to match orphaned MCP children. Sweep recorded as inconclusive, not negative.
+- `2026-09-18T06:28Z` — user output: `RESTORED: 2`, service started → CoworkVMService returned to Automatic
