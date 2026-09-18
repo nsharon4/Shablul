@@ -2,7 +2,7 @@
 title: "Windows: Claude Desktop MSIX update fails — 'Another program is currently using this file'"
 kind: technical
 created_utc: 2026-09-18T05:31:33Z
-verified_utc: 2026-09-18T05:39:00Z
+verified_utc: 2026-09-18T05:45:00Z
 expires_utc: 2026-09-25T05:31:33Z
 ttl_days: 7
 ---
@@ -73,7 +73,12 @@ Observed on a real machine, 2026-09-18: in the same elevated PowerShell block,
 `Set-Service CoworkVMService -StartupType Disabled` **failed** with
 `PermissionDenied ... CouldNotSetService`.
 
-**This is not an elevation problem.** That split — stop allowed, reconfigure
+**Elevation confirmed by direct observation**, 2026-09-18: the PowerShell window
+title read `Administrator: Windows PowerShell (x86)` while `Stop-Service` succeeded
+and `Set-Service` was denied in that same session. A non-elevated shell would have
+failed the stop as well, so elevation is ruled out as the cause.
+
+That split — stop allowed, reconfigure
 denied — is the signature of a service whose SCM security descriptor grants
 `SERVICE_STOP` but not `SERVICE_CHANGE_CONFIG`. The MSIX-installed
 `CoworkVMService` carries a descriptor that does not grant Administrators
@@ -116,6 +121,21 @@ Restore with `-Value 2` (Automatic) afterwards. Note that AppX re-registration c
 rewrite the service config back from `AppxManifest.xml`, so a disable is not
 guaranteed to survive the update. [S7]
 
+### Use a 64-bit shell
+
+The observed session was `Windows PowerShell (x86)`. Two WOW64 effects apply to a
+32-bit process on 64-bit Windows:
+
+- **Registry redirection** targets `HKLM\Software` → `HKLM\Software\Wow6432Node`.
+  `HKLM\SYSTEM` is **not** in the redirected set, so the `Start` write above is
+  expected to hit the real key from either bitness. [S22][S23]
+- **File system redirection** sends `C:\Windows\System32` to `C:\Windows\SysWOW64`,
+  so `sc.exe` invoked from a 32-bit shell is the 32-bit build. Use
+  `C:\Windows\Sysnative\sc.exe` to reach the 64-bit one.
+
+Simplest mitigation: run the whole procedure from 64-bit `Windows PowerShell`
+(Start menu entry **without** "(x86)"), which removes the question entirely.
+
 ### Caveat
 
 Disabling `CoworkVMService` disables the Claude Cowork feature. Issue #77618
@@ -149,6 +169,9 @@ local session history may not survive.
   (both **EGRESS_BLOCKED**) and `gist.github.com` (**HTTP 503**) all failed. The
   0-4 mapping was confirmed by two independent searches agreeing; the inverted
   claim from a third was rejected.
+- **Whether the `Appx` module misbehaves in 32-bit PowerShell on 64-bit Windows**
+  was searched for and **not answered** by any source reached. Treat it as unknown;
+  the recommendation to use a 64-bit shell is precaution, not a documented defect.
 - **The actual security descriptor of `CoworkVMService` was not read.** Nobody has
   run `sc.exe sdshow CoworkVMService` here. The DACL explanation is inference
   consistent with the observed stop-ok / configure-denied split, not a direct read.
@@ -179,6 +202,8 @@ local session history may not survive.
 | S19 | winreg-kb — Services and drivers | https://winreg-kb.readthedocs.io/en/latest/sources/system-keys/Services-and-drivers.html | 2026-09-18T05:39Z | WebSearch (fetch egress-blocked) |
 | S20 | Issue #77618 — CoworkVMService found in Disabled state | https://github.com/anthropics/claude-code/issues/77618 | 2026-09-18T05:38Z | WebSearch |
 | S21 | Issue #91736 — cowork-svc.exe in an SCM restart loop, only reboot recovers (0x80070020) | https://github.com/anthropics/claude-code/issues/91736 | 2026-09-18T05:38Z | WebSearch |
+| S22 | Registry Redirector — Microsoft Learn | https://learn.microsoft.com/en-us/windows/win32/winprog64/registry-redirector | 2026-09-18T05:44Z | WebSearch (fetch egress-blocked) |
+| S23 | Registry Keys Affected by WOW64 — Microsoft Learn | https://learn.microsoft.com/en-us/windows/win32/winprog64/shared-registry-keys | 2026-09-18T05:44Z | WebSearch (fetch egress-blocked) |
 | S13 | Issue #85689 — failed auto-update falls back to uninstall+reinstall, silently destroying app data | https://github.com/anthropics/claude-code/issues/85689 | 2026-09-18T05:30Z | WebSearch |
 
 ## Verification log
@@ -199,3 +224,6 @@ local session history may not survive.
 - `2026-09-18T05:39Z` — WebSearch service `Start` REG_DWORD values → **ok**, two independent confirmations of 4=Disabled; one summary claiming 3=Disabled **rejected as wrong**
 - `2026-09-18T05:39Z` — WebFetch winreg-kb.readthedocs.io → **EGRESS_BLOCKED**
 - `2026-09-18T05:39Z` — WebFetch gist.github.com/jeremyjohn/133697b2... → **HTTP 503**
+- `2026-09-18T05:44Z` — user screenshot: title bar `Administrator: Windows PowerShell (x86)`, Stop-Service clean, Set-Service denied → **elevation confirmed**, DACL inference upgraded
+- `2026-09-18T05:44Z` — WebSearch WOW64 registry redirection scope → **ok**, HKLM\Software redirected; HKLM\SYSTEM not in the redirected set
+- `2026-09-18T05:44Z` — WebSearch Appx module under 32-bit PowerShell → **no source answered the question**; left UNVERIFIED
