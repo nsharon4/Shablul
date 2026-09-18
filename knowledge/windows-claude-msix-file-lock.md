@@ -2,7 +2,7 @@
 title: "Windows: Claude Desktop MSIX update fails — 'Another program is currently using this file'"
 kind: technical
 created_utc: 2026-09-18T05:31:33Z
-verified_utc: 2026-09-18T06:28:00Z
+verified_utc: 2026-09-18T06:36:00Z
 expires_utc: 2026-09-25T05:31:33Z
 ttl_days: 7
 ---
@@ -44,7 +44,35 @@ Get-AppxPackage -Name *Claude* | Select-Object Name,Version,PackageFullName,Stat
 `Status: Ok` **and** an unchanged `Version` **and** no Claude processes running
 means **Mode B**. Stopping services will not help; the holder is not in user mode.
 
-### Mode B — orphaned Silo / Job Object
+### Mode B — orphaned Silo / Job Object — CONFIRMED ON A REAL MACHINE
+
+**Primary evidence, 2026-09-18, from the affected machine's own event log**
+(`Microsoft-Windows-AppModel-Runtime/Admin`) — this is a first-hand reading, not
+a secondary source:
+
+```
+Id 215  Error  0x80070020: Cannot create the Desktop AppX container for package
+                Claude_2.110.1.0_x64__pzs8sxrjxfjjc because an error was
+                encountered converting the job.
+
+Id 208  Error  0x80070020: Cannot create the process for package
+                Claude_2.110.1.0_x64__pzs8sxrjxfjjc because an error was
+                encountered while configuring runtime. [LaunchProcess]
+```
+
+"converting the **job**" names the Job Object directly. Corroborating state from
+the same machine, same session:
+
+- `Get-AppxPackage`: `Status: Ok`, `Version: 2.110.1.0` (unchanged) — no pending update
+- Full process sweep: **every** candidate `ParentAlive: True` — **no orphan exists**
+- The only package process is `cowork-svc.exe` parented by `services.exe` (the SCM),
+  started *after* the failing launch attempts — not a holder
+- `CoworkVMService` had been Disabled and Stopped for the failing attempts, so the
+  service is ruled out as the cause
+
+This is the complete signature. Mode B is no longer an inference on this machine.
+
+### Mode B — background
 
 The dialog text is **misleading**; the real error is `0x80070020`
 (`ERROR_SHARING_VIOLATION`) raised while creating the Desktop AppX container,
@@ -110,8 +138,15 @@ Get-WinEvent -LogName 'Microsoft-Windows-AppModel-Runtime/Admin' -MaxEvents 40 |
   Select-Object TimeCreated,Id,LevelDisplayName,Message | Format-List
 ```
 
-If no survivor is found, the documented recovery is **signing out of Windows or
-rebooting**; nothing short of that clears the orphaned container. [S31][S33]
+If no survivor is found — as in the confirmed case above — the documented recovery
+is **signing out of Windows or rebooting**; nothing short of that clears the
+orphaned container. [S31][S33] Signing out is the lighter option and is reported to
+be sufficient. [S31] (*That a logoff tears down the session's job objects is the
+obvious mechanism but was **not** verified here; only the empirical "logoff or
+reboot recovers" is sourced.*)
+
+Expect recurrence: this is an open upstream defect with roughly twenty separate
+issues filed, not a one-off local fault.
 
 ## Root cause of Mode A — a known upstream bug, not a local misconfiguration
 
@@ -429,3 +464,5 @@ local session history may not survive.
 - `2026-09-18T06:18Z` — WebSearch 0x80070020 orphaned Silo/Job → **ok**, S31–S34, S36; documented recovery is logoff or reboot
 - `2026-09-18T06:28Z` — user output: `Get-Process` path filter returned nothing while CIM found `cowork-svc.exe` in the package dir → **`Get-Process` sweep proven unreliable here**; CommandLine filter also identified as unable to match orphaned MCP children. Sweep recorded as inconclusive, not negative.
 - `2026-09-18T06:28Z` — user output: `RESTORED: 2`, service started → CoworkVMService returned to Automatic
+- `2026-09-18T06:36Z` — user event log, read first-hand: **AppModel-Runtime 215 + 208, `0x80070020`, "converting the job"**, package `Claude_2.110.1.0_x64__pzs8sxrjxfjjc` → **Mode B CONFIRMED**, no longer inference
+- `2026-09-18T06:36Z` — user process sweep: all candidates `ParentAlive: True`; only package process is `cowork-svc.exe` parented by `services.exe` (PID 2020), started after the failing launches → **no orphaned holder; service ruled out**
