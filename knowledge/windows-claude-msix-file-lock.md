@@ -2,7 +2,7 @@
 title: "Windows: Claude Desktop MSIX update fails — 'Another program is currently using this file'"
 kind: technical
 created_utc: 2026-09-18T05:31:33Z
-verified_utc: 2026-09-18T05:52:00Z
+verified_utc: 2026-09-18T05:55:00Z
 expires_utc: 2026-09-25T05:31:33Z
 ttl_days: 7
 ---
@@ -105,6 +105,10 @@ replacing. [S15]
 
 [S18][S19]
 
+> **Confirmed in the field 2026-09-18:** writing `4` produced
+> `Get-Service CoworkVMService` → `Status: Stopped, StartType: Disabled`, with no
+> `claude`, `cowork-svc` or `chrome-native-host` processes left running.
+>
 > **Correction recorded.** A search-engine summary of the community workaround
 > stated "value 3 represents Disabled ... 4 for Manual". That is **wrong and
 > inverted**: `3` is Demand/Manual, `4` is Disabled. Setting `3` would leave the
@@ -127,8 +131,10 @@ The observed session was `Windows PowerShell (x86)`. Two WOW64 effects apply to 
 32-bit process on 64-bit Windows:
 
 - **Registry redirection** targets `HKLM\Software` → `HKLM\Software\Wow6432Node`.
-  `HKLM\SYSTEM` is **not** in the redirected set, so the `Start` write above is
-  expected to hit the real key from either bitness. [S22][S23]
+  `HKLM\SYSTEM` is **not** in the redirected set. [S22][S23] **Confirmed
+  empirically 2026-09-18:** a `Start` write issued from `Windows PowerShell (x86)`
+  was reflected in SCM's own view — `Get-Service` then reported
+  `StartType: Disabled` — so the 32-bit write reached the real key.
 - **File system redirection** sends `C:\Windows\System32` to `C:\Windows\SysWOW64`,
   so `sc.exe` invoked from a 32-bit shell is the 32-bit build. Use
   `C:\Windows\Sysnative\sc.exe` to reach the 64-bit one.
@@ -141,10 +147,11 @@ Simplest mitigation: run the whole procedure from 64-bit `Windows PowerShell`
 A restore snippet of the form
 `Set-ItemProperty ... -Name Start -Value $orig` is only safe in the **same**
 shell session that captured `$orig`. Pasted into a fresh window, `$orig` is
-`$null`. Observed on a real machine 2026-09-18: the command ran with **no error
-shown**, so either PowerShell coerced `$null` to `0` (`[int]$null` is `0` [S24])
-and wrote it, or the parameter binder accepted it as a no-op. **The screenshot
-alone cannot distinguish the two** — the value has to be read back.
+`$null`. **RESOLVED by direct observation, 2026-09-18.** The command ran with no error,
+and a later read-back in the same environment returned `Original Start = 0`.
+`Set-ItemProperty -Name Start -Value $null` on this REG_DWORD **writes `0`** —
+PowerShell coerces `$null` to `0` (`[int]$null` is `0` [S24]). It is not a
+parameter-binder no-op. The original `2` was destroyed by that write.
 
 `Start = 0` is `SERVICE_BOOT_START`, which is **valid only for driver services**,
 not for a Win32 service like `CoworkVMService`. [S25][S26] It is an invalid
@@ -196,10 +203,6 @@ local session history may not survive.
 - **Whether the `Appx` module misbehaves in 32-bit PowerShell on 64-bit Windows**
   was searched for and **not answered** by any source reached. Treat it as unknown;
   the recommendation to use a 64-bit shell is precaution, not a documented defect.
-- **Whether `Set-ItemProperty -Value $null` writes 0 or is rejected by the
-  parameter binder** was NOT resolved. No reached source documents the edge case,
-  and no test machine was available here. Both branches are listed above because
-  the evidence does not choose between them.
 - **The actual security descriptor of `CoworkVMService` was not read.** Nobody has
   run `sc.exe sdshow CoworkVMService` here. The DACL explanation is inference
   consistent with the observed stop-ok / configure-denied split, not a direct read.
@@ -260,3 +263,4 @@ local session history may not survive.
 - `2026-09-18T05:44Z` — WebSearch Appx module under 32-bit PowerShell → **no source answered the question**; left UNVERIFIED
 - `2026-09-18T05:51Z` — WebSearch `Set-ItemProperty -Value $null` on REG_DWORD → **inconclusive**; `[int]$null` = 0 confirmed, binder behaviour not documented
 - `2026-09-18T05:51Z` — WebSearch service Start=0 semantics → **ok**, SERVICE_BOOT_START is driver-only (S25, S26)
+- `2026-09-18T05:55Z` — user screenshot: `Original Start = 0`, `New Start = 4`, `CoworkVMService Stopped Disabled`, Get-Process empty → **`-Value $null` writes 0 CONFIRMED**; **32-bit write to HKLM\SYSTEM reaches the real key CONFIRMED**; disable-and-stop procedure verified working
