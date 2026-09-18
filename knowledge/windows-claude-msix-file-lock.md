@@ -2,7 +2,7 @@
 title: "Windows: Claude Desktop MSIX update fails — 'Another program is currently using this file'"
 kind: technical
 created_utc: 2026-09-18T05:31:33Z
-verified_utc: 2026-09-18T06:10:00Z
+verified_utc: 2026-09-18T06:20:00Z
 expires_utc: 2026-09-25T05:31:33Z
 ttl_days: 7
 ---
@@ -20,7 +20,64 @@ A Windows dialog titled with the staged package path
 the update does not complete, and the app will not relaunch — retrying 30+
 minutes later reproduces the same dialog. A reboot clears it. [S1][S2]
 
-## Root cause — this is a known upstream bug, not a local misconfiguration
+## TWO DISTINCT FAILURE MODES SHARE THIS DIALOG
+
+The same message — "Another program is currently using this file" — is produced by
+two unrelated failures. **Diagnose which one before acting**, because the fix for
+mode A does nothing for mode B.
+
+| | **Mode A — update blocked by a file lock** | **Mode B — orphaned AppX container** |
+|---|---|---|
+| Trigger | clicking Relaunch / auto-update | launching after a crash or a stealth update |
+| `Get-AppxPackage` `Status` | may be `Staged` / `NeedsRemediation` | **`Ok`** |
+| Version after the failure | a newer package is staged | **unchanged** |
+| Handle holder | `CoworkVMService` + `Claude.exe` processes | **none in user mode** |
+| Underlying error | `0x80073D02` package in use | **`0x80070020`** sharing violation |
+| Fix | stop the service, release handles, update | **sign out or reboot** — see below |
+
+### Deciding between them
+
+```powershell
+Get-AppxPackage -Name *Claude* | Select-Object Name,Version,PackageFullName,Status,InstallLocation
+```
+
+`Status: Ok` **and** an unchanged `Version` **and** no Claude processes running
+means **Mode B**. Stopping services will not help; the holder is not in user mode.
+
+### Mode B — orphaned Silo / Job Object
+
+The dialog text is **misleading**; the real error is `0x80070020`
+(`ERROR_SHARING_VIOLATION`) raised while creating the Desktop AppX container,
+before any app code runs. [S31][S32] The previous version's container is still
+mounted along with its app-silo registry hive, and on machines where this was
+investigated **no user-mode process held any handle into it** — the leftover
+reference is on the Windows side. [S33][S34]
+
+One cause that *is* reachable without a reboot: non-PTY child processes spawned by
+`claude.exe` (`node`, `cmd`, `powershell`, `ssh`, MCP servers) inherit the package
+identity and stay inside the container. While even one survives, the container is
+never destroyed. [S34] So sweep for survivors first:
+
+```powershell
+Get-Process | Where-Object { $_.Path -like '*WindowsApps*Claude*' } |
+  Select-Object Id,Name,Path
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -like '*WindowsApps*Claude*' } |
+  Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | Format-Table -Wrap
+```
+
+Confirm the diagnosis from the event log — `AppModel-Runtime` IDs **215 / 208**: [S31][S35]
+
+```powershell
+Get-WinEvent -LogName 'Microsoft-Windows-AppModel-Runtime/Admin' -MaxEvents 40 |
+  Where-Object { $_.Id -in 215,208 } |
+  Select-Object TimeCreated,Id,LevelDisplayName,Message | Format-List
+```
+
+If no survivor is found, the documented recovery is **signing out of Windows or
+rebooting**; nothing short of that clears the orphaned container. [S31][S33]
+
+## Root cause of Mode A — a known upstream bug, not a local misconfiguration
 
 This is **not** generic "you left the app in the tray". It is a tracked defect with
 at least 14 separate issues filed against `anthropics/claude-code`. [S1]–[S10]
@@ -294,6 +351,12 @@ local session history may not survive.
 | S28 | Issue #92246 — desktop app self-updates and restarts over a running session | https://github.com/anthropics/claude-code/issues/92246 | 2026-09-18T06:08Z | WebSearch |
 | S29 | Issue #47877 — installation broken, MSIX stuck in Staged state; Squirrel→MSIX transition ~Feb 2026 | https://github.com/anthropics/claude-code/issues/47877 | 2026-09-18T06:08Z | WebSearch |
 | S30 | Deploy Claude Desktop for Windows — Claude Help Center | https://support.claude.com/en/articles/12622703-deploy-claude-desktop-for-windows | 2026-09-18T06:08Z | WebSearch (fetch egress-blocked) |
+| S31 | Issue #53247 — orphaned Silo / Job Object after crash, only logoff or reboot recovers (0x80070020, AppModel-Runtime 215/208) | https://github.com/anthropics/claude-code/issues/53247 | 2026-09-18T06:18Z | WebSearch |
+| S32 | Issue #92202 — fails to launch, 0x80070020 when creating the Desktop AppX container | https://github.com/anthropics/claude-code/issues/92202 | 2026-09-18T06:18Z | WebSearch |
+| S33 | Issue #95266 — old app container stays mounted with no process holding it | https://github.com/anthropics/claude-code/issues/95266 | 2026-09-18T06:18Z | WebSearch |
+| S34 | Issue #92167 — non-PTY children keep the AppX container and app-silo hive mounted | https://github.com/anthropics/claude-code/issues/92167 | 2026-09-18T06:18Z | WebSearch |
+| S35 | Issue #92961 — "Another program..." after a crash; no pending update, no usermode handle holder, package cleanly registered | https://github.com/anthropics/claude-code/issues/92961 | 2026-09-18T06:18Z | WebSearch |
+| S36 | Issue #73107 — container silo pinned by an orphaned elevated Claude Code child process | https://github.com/anthropics/claude-code/issues/73107 | 2026-09-18T06:18Z | WebSearch |
 | S13 | Issue #85689 — failed auto-update falls back to uninstall+reinstall, silently destroying app data | https://github.com/anthropics/claude-code/issues/85689 | 2026-09-18T05:30Z | WebSearch |
 
 ## Verification log
@@ -325,3 +388,6 @@ local session history may not survive.
 - `2026-09-18T06:08Z` — WebSearch Claude Desktop MSIX update mechanism → **ok**, sideloaded dev-signed MSIX + in-app self-updater (~6h checks), S27–S29
 - `2026-09-18T06:09Z` — WebFetch support.claude.com → **EGRESS_BLOCKED**
 - `2026-09-18T06:09Z` — WebFetch downloads.claude.ai → **EGRESS_BLOCKED**
+- `2026-09-18T06:18Z` — user output: `Status: Ok`, `Version: 2.110.1.0` unchanged, no Claude processes, launch still fails → **re-diagnosed as Mode B (orphaned container), not Mode A (file lock)**
+- `2026-09-18T06:18Z` — WebSearch issue #92961 → **ok**, matches this signature exactly (crash, no pending update, no usermode holder)
+- `2026-09-18T06:18Z` — WebSearch 0x80070020 orphaned Silo/Job → **ok**, S31–S34, S36; documented recovery is logoff or reboot
