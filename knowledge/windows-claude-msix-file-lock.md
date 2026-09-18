@@ -2,7 +2,7 @@
 title: "Windows: Claude Desktop MSIX update fails — 'Another program is currently using this file'"
 kind: technical
 created_utc: 2026-09-18T05:31:33Z
-verified_utc: 2026-09-18T05:30:00Z
+verified_utc: 2026-09-18T05:39:00Z
 expires_utc: 2026-09-25T05:31:33Z
 ttl_days: 7
 ---
@@ -66,6 +66,62 @@ Windows' own lever for the same class of failure is
 `Add-AppxPackage -ForceApplicationShutdown`, which lets the deployment engine close
 the holding app itself. [S12]
 
+## Field report: `Set-Service -StartupType Disabled` fails with "Access is denied"
+
+Observed on a real machine, 2026-09-18: in the same elevated PowerShell block,
+`Stop-Service CoworkVMService -Force` **succeeded** while
+`Set-Service CoworkVMService -StartupType Disabled` **failed** with
+`PermissionDenied ... CouldNotSetService`.
+
+**This is not an elevation problem.** That split — stop allowed, reconfigure
+denied — is the signature of a service whose SCM security descriptor grants
+`SERVICE_STOP` but not `SERVICE_CHANGE_CONFIG`. The MSIX-installed
+`CoworkVMService` carries a descriptor that does not grant Administrators
+`SERVICE_CHANGE_CONFIG`, so SCM refuses the change regardless of elevation. [S14][S15]
+The same missing right is why the service cannot configure its own SCM recovery
+actions, reported separately as "Access is denied". [S16][S17]
+
+That failure has a direct consequence for the update: because the service cannot
+disarm its own auto-restart policy before stopping, a slow stop during package
+servicing lets SCM restart it mid-update, re-locking the files the updater is
+replacing. [S15]
+
+### Registry route (bypasses the SCM DACL)
+
+`Start` is a `REG_DWORD` under `HKLM\SYSTEM\CurrentControlSet\Services\<name>`:
+
+| Value | Meaning |
+|---|---|
+| 0 | Boot |
+| 1 | System |
+| 2 | **Automatic** |
+| 3 | **Demand / Manual** |
+| 4 | **Disabled** |
+
+[S18][S19]
+
+> **Correction recorded.** A search-engine summary of the community workaround
+> stated "value 3 represents Disabled ... 4 for Manual". That is **wrong and
+> inverted**: `3` is Demand/Manual, `4` is Disabled. Setting `3` would leave the
+> service demand-startable — and `CoworkVMService` has a named-pipe start trigger,
+> so it would still come back. Use `4`.
+
+```powershell
+# record the original value first
+(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\CoworkVMService').Start
+Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\CoworkVMService' -Name Start -Value 4
+```
+
+Restore with `-Value 2` (Automatic) afterwards. Note that AppX re-registration can
+rewrite the service config back from `AppxManifest.xml`, so a disable is not
+guaranteed to survive the update. [S7]
+
+### Caveat
+
+Disabling `CoworkVMService` disables the Claude Cowork feature. Issue #77618
+reports the service being *found* in a Disabled state as its own failure mode, so
+this is a temporary measure for the update window, not a permanent setting. [S20]
+
 ## Do NOT uninstall and reinstall as a first resort
 
 A failed MSIX auto-update that falls back to uninstall+reinstall has been reported
@@ -88,6 +144,14 @@ local session history may not survive.
   Check the issue URLs directly before assuming the bug is still open.
 - **The winget package ID** (`Anthropic.Claude`) was **not** verified; `claude.com`
   is egress-blocked. Do not rely on it — use the Microsoft Store update path.
+- **The `Start` value table and the SCM DACL explanation** come from search-engine
+  summarisation. Direct fetch of `learn.microsoft.com`, `winreg-kb.readthedocs.io`
+  (both **EGRESS_BLOCKED**) and `gist.github.com` (**HTTP 503**) all failed. The
+  0-4 mapping was confirmed by two independent searches agreeing; the inverted
+  claim from a third was rejected.
+- **The actual security descriptor of `CoworkVMService` was not read.** Nobody has
+  run `sc.exe sdshow CoworkVMService` here. The DACL explanation is inference
+  consistent with the observed stop-ok / configure-denied split, not a direct read.
 - **Exact affected version range.** The reporting screenshot in this session showed
   `Claude_2.110.1.0_x64`; the issues do not pin a verified version range here.
 
@@ -107,6 +171,14 @@ local session history may not survive.
 | S10 | Issue #94432 — CoworkVMService blocks self-update, requiring full PC reboot | https://github.com/anthropics/claude-code/issues/94432 | 2026-09-18T05:30Z | WebSearch |
 | S11 | Microsoft Q&A — "Deployment failed with HRESULT: 0x80073D02, resources it modifies are currently in use" | https://learn.microsoft.com/en-us/answers/questions/3967188/deployment-failed-with-hresult-0x80073d02-the-pack | 2026-09-18T05:30Z | WebSearch (fetch egress-blocked) |
 | S12 | MSIX deployment troubleshooting — Microsoft Learn | https://learn.microsoft.com/en-us/windows/msix/desktop/managing-your-msix-deployment-troubleshooting | 2026-09-18T05:30Z | WebSearch (fetch egress-blocked) |
+| S14 | Issue #57371 — provide a way to disable the bundled CoworkVMService | https://github.com/anthropics/claude-code/issues/57371 | 2026-09-18T05:38Z | WebSearch |
+| S15 | Issue #92092 — CoworkVMService fails to configure/disarm SCM recovery actions ("Access is denied") | https://github.com/anthropics/claude-code/issues/92092 | 2026-09-18T05:38Z | WebSearch |
+| S16 | Issue #93633 — CoworkVMService cannot set its own SCM recovery actions ("Access is denied") | https://github.com/anthropics/claude-code/issues/93633 | 2026-09-18T05:38Z | WebSearch |
+| S17 | Issue #92182 — packaged service lifecycle corrupts MSIX package ACLs | https://github.com/anthropics/claude-code/issues/92182 | 2026-09-18T05:38Z | WebSearch |
+| S18 | HKLM\SYSTEM\CurrentControlSet\Services Registry Tree — Microsoft Learn | https://learn.microsoft.com/en-us/windows-hardware/drivers/install/hklm-system-currentcontrolset-services-registry-tree | 2026-09-18T05:39Z | WebSearch (fetch egress-blocked) |
+| S19 | winreg-kb — Services and drivers | https://winreg-kb.readthedocs.io/en/latest/sources/system-keys/Services-and-drivers.html | 2026-09-18T05:39Z | WebSearch (fetch egress-blocked) |
+| S20 | Issue #77618 — CoworkVMService found in Disabled state | https://github.com/anthropics/claude-code/issues/77618 | 2026-09-18T05:38Z | WebSearch |
+| S21 | Issue #91736 — cowork-svc.exe in an SCM restart loop, only reboot recovers (0x80070020) | https://github.com/anthropics/claude-code/issues/91736 | 2026-09-18T05:38Z | WebSearch |
 | S13 | Issue #85689 — failed auto-update falls back to uninstall+reinstall, silently destroying app data | https://github.com/anthropics/claude-code/issues/85689 | 2026-09-18T05:30Z | WebSearch |
 
 ## Verification log
@@ -122,3 +194,8 @@ local session history may not survive.
 - `2026-09-18T05:30Z` — WebFetch https://claude.com/download → **EGRESS_BLOCKED**
 - `2026-09-18T05:30Z` — WebFetch learn.microsoft.com/.../appxpkg/troubleshooting → **EGRESS_BLOCKED**
 - `2026-09-18T05:30Z` — WebSearch "0x80073D02 ERROR_INSTALL_PACKAGE_IN_USE" → **ok**, surfaced S11, S12
+- `2026-09-18T05:38Z` — WebSearch "CoworkVMService Set-Service Access is denied" → **ok**, surfaced S14, S16, S20, S21
+- `2026-09-18T05:38Z` — WebSearch "MSIX packaged service SCM DACL access denied" → **ok**, surfaced S15, S17
+- `2026-09-18T05:39Z` — WebSearch service `Start` REG_DWORD values → **ok**, two independent confirmations of 4=Disabled; one summary claiming 3=Disabled **rejected as wrong**
+- `2026-09-18T05:39Z` — WebFetch winreg-kb.readthedocs.io → **EGRESS_BLOCKED**
+- `2026-09-18T05:39Z` — WebFetch gist.github.com/jeremyjohn/133697b2... → **HTTP 503**
